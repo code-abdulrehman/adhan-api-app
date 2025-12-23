@@ -139,6 +139,7 @@
     const coordsChip = document.getElementById('coords-chip');
     const useLocationBtn = document.getElementById('use-location');
     const applyBtn = document.getElementById('apply');
+    const generateBtn = document.getElementById('generate');
     const exportBtn = document.getElementById('export-json');
     const selectionEl = document.getElementById('current-selection');
 
@@ -147,6 +148,7 @@
     const LS_LAST_VIEW_KEY = 'adhan-last-view';
     let cachedData = null;
     let lastRendered = { days: [], meta: null };
+    let adhanReadyPromise = null;
 
     function setStatus(msg) { statusEl.textContent = msg; }
 
@@ -333,7 +335,24 @@
       persistLastRendered();
     }
 
-    function computeSchedule(year, monthIndex, coords, methodKey) {
+    function ensureAdhanReady() {
+      if (window.adhan) return Promise.resolve();
+      if (adhanReadyPromise) return adhanReadyPromise;
+      adhanReadyPromise = new Promise((resolve, reject) => {
+        const fallback = document.createElement('script');
+        fallback.src = 'https://unpkg.com/adhan@4.4.3/dist/Adhan.min.js';
+        fallback.onload = () => {
+          if (window.adhan) resolve();
+          else reject(new Error('Adhan failed to load'));
+        };
+        fallback.onerror = () => reject(new Error('Adhan CDN failed'));
+        document.head.appendChild(fallback);
+      });
+      return adhanReadyPromise;
+    }
+
+    async function computeSchedule(year, monthIndex, coords, methodKey) {
+      await ensureAdhanReady();
       const start = new Date(year, monthIndex, 1);
       const end = new Date(year, monthIndex + 1, 0);
       const days = [];
@@ -358,10 +377,11 @@
       return { days, qibla: qibla.direction };
     }
 
-    function computeYearData(year, coords, methodKey, tz) {
+    async function computeYearData(year, coords, methodKey, tz) {
+      await ensureAdhanReady();
       const months = [];
       for (let m = 0; m < 12; m += 1) {
-        const { days, qibla } = computeSchedule(year, m, coords, methodKey);
+        const { days, qibla } = await computeSchedule(year, m, coords, methodKey);
         months.push({
           month: `${year}-${String(m + 1).padStart(2, '0')}`,
           days,
@@ -379,7 +399,8 @@
       };
     }
 
-    function applyCustom() {
+    async function applyCustom() {
+      await ensureAdhanReady();
       const year = Number(yearSelect.value);
       const monthIndex = Number(monthSelect.value);
       const tz = tzSelect.value;
@@ -391,7 +412,7 @@
         return;
       }
       const coords = new adhan.Coordinates(lat, lng);
-      const { days, qibla } = computeSchedule(year, monthIndex, coords, method);
+      const { days, qibla } = await computeSchedule(year, monthIndex, coords, method);
       renderTable(days, tz);
       const meta = {
         view: 'Custom Month',
@@ -460,7 +481,8 @@
             Number(latInput.value) || 35.7897507,
             Number(lngInput.value) || -78.6912485,
           );
-          cachedData = computeYearData(now.getFullYear(), coords, DEFAULT_METHOD, tz);
+          await ensureAdhanReady();
+          cachedData = await computeYearData(now.getFullYear(), coords, DEFAULT_METHOD, tz);
           loadedFrom = 'client-generated';
           persistCachedData();
           setStatus('Generated data in-browser (serverless fallback).');
@@ -514,6 +536,27 @@
 
     useLocationBtn.addEventListener('click', tryGeo);
     applyBtn.addEventListener('click', applyCustom);
+    generateBtn.addEventListener('click', async () => {
+      setStatus('Generating full-year data in browser...');
+      const tz = tzSelect.value;
+      const year = Number(yearSelect.value) || new Date().getFullYear();
+      const method = methodSelect.value || DEFAULT_METHOD;
+      const lat = Number(latInput.value) || 35.7897507;
+      const lng = Number(lngInput.value) || -78.6912485;
+      try {
+        await ensureAdhanReady();
+        const coords = new adhan.Coordinates(lat, lng);
+        cachedData = await computeYearData(year, coords, method, tz);
+        persistCachedData();
+        setStatus('Generated data in-browser and saved to localStorage.');
+        setQiblaInfo(cachedData.qiblaDegreesFromNorth);
+        setCoordsChip(lat, lng);
+        applyFromJson();
+      } catch (err) {
+        console.error(err);
+        setStatus('Failed to generate data in-browser.');
+      }
+    });
     exportBtn.addEventListener('click', exportShown);
     yearSelect.addEventListener('change', applyFromJson);
     monthSelect.addEventListener('change', applyFromJson);
