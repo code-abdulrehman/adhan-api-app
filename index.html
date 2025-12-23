@@ -122,7 +122,7 @@
     </table>
   </div>
 
-  <script src="adhan.umd.min.js"></script>
+  <script src="/adhan.umd.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/moment@2.30.1/moment.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.6.0/builds/moment-timezone-with-data.min.js"></script>
   <script>
@@ -212,6 +212,10 @@
     }
 
     function setQiblaInfo(deg) {
+      if (typeof deg !== 'number' || Number.isNaN(deg)) {
+        qiblaEl.textContent = 'Qibla direction unavailable.';
+        return;
+      }
       qiblaEl.textContent = `Qibla direction: ${deg.toFixed(2)}° from true North`;
     }
 
@@ -267,7 +271,14 @@
       return monthData.days.find(d => d.date === dateStr) || null;
     }
 
-    function applyFromJson() {
+    async function ensureYearData(year, tz, method, coords) {
+      if (cachedData && cachedData.year === year) return;
+      await ensureAdhanReady();
+      cachedData = await computeYearData(year, coords, method, tz);
+      persistCachedData();
+    }
+
+    async function applyFromJson() {
       const year = Number(yearSelect.value);
       const tz = tzSelect.value;
       const mode = viewModeSelect.value;
@@ -275,10 +286,19 @@
       let meta = null;
 
       if (mode === 'full-year') {
-        const months = getFullYearDataFromJson(year);
+        let months = getFullYearDataFromJson(year);
+        if (!months.length) {
+          const method = methodSelect.value || DEFAULT_METHOD;
+          const lat = Number(latInput.value) || 35.7897507;
+          const lng = Number(lngInput.value) || -78.6912485;
+          const coords = new adhan.Coordinates(lat, lng);
+          setStatus('No data found; generating in browser for selected year...');
+          await ensureYearData(year, tz, method, coords);
+          months = getFullYearDataFromJson(year);
+        }
         days = months.flatMap(m => m.days || []);
         if (!days.length) {
-          setStatus('No data for selected year in JSON. Try custom calculation.');
+          setStatus('No data for selected year. Please generate again.');
           return;
         }
         meta = { view: 'Full Year', year, month: null, day: null, tz, method: cachedData?.calculationMethod || DEFAULT_METHOD };
@@ -286,9 +306,19 @@
         setStatus(`Showing JSON data for full year ${year} in ${tz}`);
       } else if (mode === 'today') {
         const todayStr = new Date().toISOString().split('T')[0];
-        const dayData = getSingleDayFromJson(todayStr);
+        let dayData = getSingleDayFromJson(todayStr);
         if (!dayData) {
-          setStatus('No data for today in JSON. Try custom calculation.');
+          const method = methodSelect.value || DEFAULT_METHOD;
+          const lat = Number(latInput.value) || 35.7897507;
+          const lng = Number(lngInput.value) || -78.6912485;
+          const coords = new adhan.Coordinates(lat, lng);
+          const y = Number(todayStr.slice(0, 4));
+          setStatus('No data for today; generating in browser for this year...');
+          await ensureYearData(y, tz, method, coords);
+          dayData = getSingleDayFromJson(todayStr);
+        }
+        if (!dayData) {
+          setStatus('No data for today. Please generate again.');
           return;
         }
         days = [dayData];
@@ -301,9 +331,19 @@
           setStatus('Pick a date to view a single day.');
           return;
         }
-        const dayData = getSingleDayFromJson(picked);
+        let dayData = getSingleDayFromJson(picked);
         if (!dayData) {
-          setStatus('No data for that date in JSON. Try custom calculation.');
+          const method = methodSelect.value || DEFAULT_METHOD;
+          const lat = Number(latInput.value) || 35.7897507;
+          const lng = Number(lngInput.value) || -78.6912485;
+          const coords = new adhan.Coordinates(lat, lng);
+          const y = Number(picked.slice(0, 4));
+          setStatus('No data for that date; generating in browser for that year...');
+          await ensureYearData(y, tz, method, coords);
+          dayData = getSingleDayFromJson(picked);
+        }
+        if (!dayData) {
+          setStatus('No data for that date. Please generate again.');
           return;
         }
         days = [dayData];
@@ -312,9 +352,18 @@
         setStatus(`Showing JSON data for ${picked} in ${tz}`);
       } else {
         const monthIndex = Number(monthSelect.value);
-        const monthData = getMonthDataFromJson(year, monthIndex);
+        let monthData = getMonthDataFromJson(year, monthIndex);
         if (!monthData) {
-          setStatus('No data for selected month/year in JSON. Try custom calculation.');
+          const method = methodSelect.value || DEFAULT_METHOD;
+          const lat = Number(latInput.value) || 35.7897507;
+          const lng = Number(lngInput.value) || -78.6912485;
+          const coords = new adhan.Coordinates(lat, lng);
+          setStatus('No data found; generating in browser for selected year...');
+          await ensureYearData(year, tz, method, coords);
+          monthData = getMonthDataFromJson(year, monthIndex);
+        }
+        if (!monthData) {
+          setStatus('No data for selected month/year. Please generate again.');
           return;
         }
         days = monthData.days;
@@ -340,20 +389,11 @@
       if (window.adhan) return Promise.resolve();
       if (adhanReadyPromise) return adhanReadyPromise;
       adhanReadyPromise = new Promise((resolve, reject) => {
-        const fallback = document.createElement('script');
-        fallback.src = 'adhan.umd.min.js';
-        fallback.onload = () => {
-          if (window.adhan) resolve();
-          else reject(new Error('Adhan failed to load'));
-        };
-        fallback.onerror = () => {
-          const cdn = document.createElement('script');
-          cdn.src = 'https://unpkg.com/adhan@4.4.3/dist/Adhan.min.js';
-          cdn.onload = () => (window.adhan ? resolve() : reject(new Error('Adhan failed to load (CDN)')));
-          cdn.onerror = () => reject(new Error('Adhan CDN failed'));
-          document.head.appendChild(cdn);
-        };
-        document.head.appendChild(fallback);
+        const local = document.createElement('script');
+        local.src = 'adhan.umd.min.js';
+        local.onload = () => (window.adhan ? resolve() : reject(new Error('Adhan failed to load (local)')));
+        local.onerror = () => reject(new Error('Adhan local bundle failed to load'));
+        document.head.appendChild(local);
       });
       return adhanReadyPromise;
     }
@@ -565,11 +605,16 @@
       }
     });
     exportBtn.addEventListener('click', exportShown);
-    yearSelect.addEventListener('change', applyFromJson);
-    monthSelect.addEventListener('change', applyFromJson);
-    tzSelect.addEventListener('change', applyFromJson);
-    viewModeSelect.addEventListener('change', applyFromJson);
-    dayInput.addEventListener('change', applyFromJson);
+    const applyFromJsonHandler = () => applyFromJson().catch(err => {
+      console.error(err);
+      setStatus('Failed to render from data.');
+    });
+
+    yearSelect.addEventListener('change', applyFromJsonHandler);
+    monthSelect.addEventListener('change', applyFromJsonHandler);
+    tzSelect.addEventListener('change', applyFromJsonHandler);
+    viewModeSelect.addEventListener('change', applyFromJsonHandler);
+    dayInput.addEventListener('change', applyFromJsonHandler);
 
     init();
   </script>
