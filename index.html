@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Prayer Times & Qibla</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Inter', system-ui, -apple-system, sans-serif; margin: 0; padding: 16px; background: #f6f7fb; color: #111; }
+    h1 { margin: 0 0 12px; }
+    .panel { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.06); margin-bottom: 16px; }
+    .controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+    label { font-size: 13px; font-weight: 600; color: #333; display: block; margin-bottom: 4px; }
+    input, select, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #d1d5db; font-size: 14px; box-sizing: border-box; }
+    button { cursor: pointer; background: #2563eb; color: #fff; border: none; font-weight: 600; }
+    button.secondary { background: #111827; }
+    button:disabled { opacity: 0.6; cursor: not-allowed; }
+    table { width: 100%; border-collapse: collapse; margin-top: 12px; }
+    th, td { padding: 10px; border-bottom: 1px solid #e5e7eb; text-align: left; font-size: 13px; }
+    th { background: #f3f4f6; font-weight: 700; }
+    .status { font-size: 13px; color: #374151; }
+    .qibla { font-weight: 700; }
+    .chip { display: inline-flex; align-items: center; gap: 6px; background: #e0f2fe; color: #075985; padding: 6px 10px; border-radius: 999px; font-size: 12px; font-weight: 600; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .selection { font-size: 13px; color: #4b5563; }
+    @media (max-width: 768px) { table { font-size: 12px; } th, td { padding: 8px; } }
+  </style>
+</head>
+<body>
+  <h1>Prayer Times & Qibla</h1>
+  <div class="panel">
+    <div class="controls">
+      <div>
+        <label for="view-mode">View</label>
+        <select id="view-mode">
+          <option value="month">Month</option>
+          <option value="full-year">Full Year</option>
+          <option value="today">Today</option>
+          <option value="single-day">Single Day</option>
+        </select>
+      </div>
+      <div>
+        <label for="year">Year</label>
+        <select id="year"></select>
+      </div>
+      <div>
+        <label for="month">Month</label>
+        <select id="month"></select>
+      </div>
+      <div>
+        <label for="day">Day</label>
+        <input id="day" type="date" />
+      </div>
+      <div>
+        <label for="timezone">Timezone</label>
+        <select id="timezone"></select>
+      </div>
+      <div>
+        <label for="method">Calculation Method</label>
+        <select id="method">
+          <option value="MoonsightingCommittee">Moonsighting Committee</option>
+          <option value="MuslimWorldLeague">Muslim World League</option>
+          <option value="Egyptian">Egyptian</option>
+          <option value="Karachi">Karachi</option>
+          <option value="UmmAlQura">Umm al-Qura</option>
+          <option value="Dubai">Dubai</option>
+          <option value="Qatar">Qatar</option>
+          <option value="Kuwait">Kuwait</option>
+          <option value="Singapore">Singapore</option>
+          <option value="Turkey">Turkey</option>
+          <option value="Tehran">Tehran</option>
+          <option value="NorthAmerica">North America (ISNA)</option>
+        </select>
+      </div>
+      <div>
+        <label for="lat">Latitude</label>
+        <input id="lat" type="number" step="0.000001" />
+      </div>
+      <div>
+        <label for="lng">Longitude</label>
+        <input id="lng" type="number" step="0.000001" />
+      </div>
+      <div style="display:flex; gap:8px;">
+        <button id="use-location" type="button" aria-live="polite">Use my location</button>
+        <button id="apply" type="button" class="secondary">Apply</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="export-json" type="button">Export shown data (JSON)</button>
+      <span class="chip" id="coords-chip"></span>
+    </div>
+    <p class="status" id="status">Loading prayerTimes.json...</p>
+    <p class="selection" id="current-selection"></p>
+    <p class="status qibla" id="qibla"></p>
+  </div>
+
+  <div class="panel">
+    <table id="table">
+      <thead>
+        <tr>
+          <th>Date</th>
+          <th>Fajr</th>
+          <th>Sunrise</th>
+          <th>Dhuhr</th>
+          <th>Asr</th>
+          <th>Maghrib</th>
+          <th>Isha</th>
+        </tr>
+      </thead>
+      <tbody></tbody>
+    </table>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/adhan@4.4.3/dist/Adhan.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/moment@2.30.1/moment.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/moment-timezone@0.6.0/builds/moment-timezone-with-data.min.js"></script>
+  <script>
+    const statusEl = document.getElementById('status');
+    const tableBody = document.querySelector('#table tbody');
+    const yearSelect = document.getElementById('year');
+    const monthSelect = document.getElementById('month');
+    const tzSelect = document.getElementById('timezone');
+    const latInput = document.getElementById('lat');
+    const lngInput = document.getElementById('lng');
+    const methodSelect = document.getElementById('method');
+    const viewModeSelect = document.getElementById('view-mode');
+    const dayInput = document.getElementById('day');
+    const qiblaEl = document.getElementById('qibla');
+    const coordsChip = document.getElementById('coords-chip');
+    const useLocationBtn = document.getElementById('use-location');
+    const applyBtn = document.getElementById('apply');
+    const exportBtn = document.getElementById('export-json');
+    const selectionEl = document.getElementById('current-selection');
+
+    const DEFAULT_METHOD = 'MoonsightingCommittee';
+    let cachedData = null;
+    let lastRendered = { days: [], meta: null };
+
+    function setStatus(msg) { statusEl.textContent = msg; }
+
+    function populateTimezones() {
+      const zones = moment.tz.names();
+      zones.forEach(z => {
+        const opt = document.createElement('option');
+        opt.value = z;
+        opt.textContent = z;
+        tzSelect.appendChild(opt);
+      });
+      const localTz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      tzSelect.value = zones.includes(localTz) ? localTz : 'UTC';
+    }
+
+    function populateYearsAndMonths(year) {
+      const startYear = year - 2;
+      const endYear = year + 2;
+      for (let y = startYear; y <= endYear; y += 1) {
+        const opt = document.createElement('option');
+        opt.value = y;
+        opt.textContent = y;
+        if (y === year) opt.selected = true;
+        yearSelect.appendChild(opt);
+      }
+      const monthNames = moment.months();
+      monthNames.forEach((name, idx) => {
+        const opt = document.createElement('option');
+        opt.value = idx;
+        opt.textContent = `${idx + 1} - ${name}`;
+        if (idx === new Date().getMonth()) opt.selected = true;
+        monthSelect.appendChild(opt);
+      });
+    }
+
+    function formatTime(isoString, tz) {
+      return moment(isoString).tz(tz).format('hh:mm A');
+    }
+
+    function renderTable(days, tz) {
+      tableBody.innerHTML = '';
+      days.forEach(day => {
+        const tr = document.createElement('tr');
+        const cells = [
+          day.date,
+          formatTime(day.prayers.fajr, tz),
+          formatTime(day.prayers.sunrise, tz),
+          formatTime(day.prayers.dhuhr, tz),
+          formatTime(day.prayers.asr, tz),
+          formatTime(day.prayers.maghrib, tz),
+          formatTime(day.prayers.isha, tz),
+        ];
+        cells.forEach(val => {
+          const td = document.createElement('td');
+          td.textContent = val;
+          tr.appendChild(td);
+        });
+        tableBody.appendChild(tr);
+      });
+    }
+
+    function setQiblaInfo(deg) {
+      qiblaEl.textContent = `Qibla direction: ${deg.toFixed(2)}° from true North`;
+    }
+
+    function setCoordsChip(lat, lng) {
+      coordsChip.textContent = `Lat ${lat.toFixed(4)}, Lng ${lng.toFixed(4)}`;
+    }
+
+    function setSelection(meta) {
+      if (!meta) {
+        selectionEl.textContent = '';
+        return;
+      }
+      const parts = [
+        `View: ${meta.view}`,
+        `Year: ${meta.year}`,
+        `Month: ${meta.month ? meta.month : '-'}`,
+        `Day: ${meta.day ? meta.day : '-'}`,
+        `TZ: ${meta.tz}`,
+        `Method: ${meta.method}`,
+      ];
+      selectionEl.textContent = parts.join(' | ');
+    }
+
+    function getMonthDataFromJson(year, monthIndex) {
+      if (!cachedData) return null;
+      const months = cachedData.months || [];
+      const monthLabel = `${year}-${String(monthIndex + 1).padStart(2, '0')}`;
+      return months.find(m => m.month === monthLabel);
+    }
+
+    function getFullYearDataFromJson(year) {
+      if (!cachedData) return [];
+      return (cachedData.months || []).filter(m => Number(m.month.slice(0, 4)) === year);
+    }
+
+    function getSingleDayFromJson(dateStr) {
+      if (!cachedData) return null;
+      const [year, month, day] = dateStr.split('-').map(Number);
+      const monthData = getMonthDataFromJson(year, month - 1);
+      if (!monthData) return null;
+      return monthData.days.find(d => d.date === dateStr) || null;
+    }
+
+    function applyFromJson() {
+      const year = Number(yearSelect.value);
+      const tz = tzSelect.value;
+      const mode = viewModeSelect.value;
+      let days = [];
+      let meta = null;
+
+      if (mode === 'full-year') {
+        const months = getFullYearDataFromJson(year);
+        days = months.flatMap(m => m.days || []);
+        if (!days.length) {
+          setStatus('No data for selected year in JSON. Try custom calculation.');
+          return;
+        }
+        meta = { view: 'Full Year', year, month: null, day: null, tz, method: cachedData?.calculationMethod || DEFAULT_METHOD };
+        renderTable(days, tz);
+        setStatus(`Showing JSON data for full year ${year} in ${tz}`);
+      } else if (mode === 'today') {
+        const todayStr = new Date().toISOString().split('T')[0];
+        const dayData = getSingleDayFromJson(todayStr);
+        if (!dayData) {
+          setStatus('No data for today in JSON. Try custom calculation.');
+          return;
+        }
+        days = [dayData];
+        meta = { view: 'Today', year, month: todayStr.slice(0, 7), day: todayStr, tz, method: cachedData?.calculationMethod || DEFAULT_METHOD };
+        renderTable(days, tz);
+        setStatus(`Showing JSON data for today (${todayStr}) in ${tz}`);
+      } else if (mode === 'single-day') {
+        const picked = dayInput.value;
+        if (!picked) {
+          setStatus('Pick a date to view a single day.');
+          return;
+        }
+        const dayData = getSingleDayFromJson(picked);
+        if (!dayData) {
+          setStatus('No data for that date in JSON. Try custom calculation.');
+          return;
+        }
+        days = [dayData];
+        meta = { view: 'Single Day', year, month: picked.slice(0, 7), day: picked, tz, method: cachedData?.calculationMethod || DEFAULT_METHOD };
+        renderTable(days, tz);
+        setStatus(`Showing JSON data for ${picked} in ${tz}`);
+      } else {
+        const monthIndex = Number(monthSelect.value);
+        const monthData = getMonthDataFromJson(year, monthIndex);
+        if (!monthData) {
+          setStatus('No data for selected month/year in JSON. Try custom calculation.');
+          return;
+        }
+        days = monthData.days;
+        meta = { view: 'Month', year, month: monthData.month, day: null, tz, method: cachedData?.calculationMethod || DEFAULT_METHOD };
+        renderTable(days, tz);
+        setStatus(`Showing JSON data for ${monthData.month} in ${tz}`);
+      }
+
+      if (cachedData && cachedData.qiblaDegreesFromNorth != null) {
+        setQiblaInfo(cachedData.qiblaDegreesFromNorth);
+      }
+      if (cachedData && cachedData.coordinates) {
+        setCoordsChip(cachedData.coordinates.latitude, cachedData.coordinates.longitude);
+        latInput.value = cachedData.coordinates.latitude;
+        lngInput.value = cachedData.coordinates.longitude;
+      }
+      lastRendered = { days, meta };
+      setSelection(meta);
+    }
+
+    function computeSchedule(year, monthIndex, coords, methodKey) {
+      const start = new Date(year, monthIndex, 1);
+      const end = new Date(year, monthIndex + 1, 0);
+      const days = [];
+      const params = adhan.CalculationMethod[methodKey]();
+      const cursor = new Date(start);
+      while (cursor <= end) {
+        const pt = new adhan.PrayerTimes(coords, cursor, params);
+        days.push({
+          date: cursor.toISOString().split('T')[0],
+          prayers: {
+            fajr: pt.fajr,
+            sunrise: pt.sunrise,
+            dhuhr: pt.dhuhr,
+            asr: pt.asr,
+            maghrib: pt.maghrib,
+            isha: pt.isha,
+          },
+        });
+        cursor.setDate(cursor.getDate() + 1);
+      }
+      const qibla = new adhan.Qibla(coords);
+      return { days, qibla: qibla.direction };
+    }
+
+    function applyCustom() {
+      const year = Number(yearSelect.value);
+      const monthIndex = Number(monthSelect.value);
+      const tz = tzSelect.value;
+      const lat = Number(latInput.value);
+      const lng = Number(lngInput.value);
+      const method = methodSelect.value || DEFAULT_METHOD;
+      if (Number.isNaN(lat) || Number.isNaN(lng)) {
+        setStatus('Latitude/Longitude required for custom calculation.');
+        return;
+      }
+      const coords = new adhan.Coordinates(lat, lng);
+      const { days, qibla } = computeSchedule(year, monthIndex, coords, method);
+      renderTable(days, tz);
+      const meta = {
+        view: 'Custom Month',
+        year,
+        month: `${year}-${String(monthIndex + 1).padStart(2, '0')}`,
+        day: null,
+        tz,
+        method,
+      };
+      setStatus(`Custom calculation for ${meta.month} using ${method} in ${tz}`);
+      setQiblaInfo(qibla);
+      setCoordsChip(lat, lng);
+      lastRendered = { days, meta };
+      setSelection(meta);
+    }
+
+    function tryGeo() {
+      if (!navigator.geolocation) {
+        setStatus('Geolocation not supported, using current inputs.');
+        return;
+      }
+      setStatus('Requesting location...');
+      navigator.geolocation.getCurrentPosition(
+        (pos) => {
+          const { latitude, longitude } = pos.coords;
+          latInput.value = latitude;
+          lngInput.value = longitude;
+          setStatus('Location acquired. Click Apply to use it.');
+          setCoordsChip(latitude, longitude);
+        },
+        (err) => {
+          console.error(err);
+          setStatus('Location denied/unavailable. Using current inputs.');
+        },
+        { enableHighAccuracy: true, timeout: 7000, maximumAge: 60000 },
+      );
+    }
+
+    async function init() {
+      populateTimezones();
+      populateYearsAndMonths(new Date().getFullYear());
+      methodSelect.value = DEFAULT_METHOD;
+      try {
+        const res = await fetch('prayerTimes.json');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        cachedData = await res.json();
+        setStatus('Loaded prayerTimes.json');
+        if (cachedData.coordinates) {
+          latInput.value = cachedData.coordinates.latitude;
+          lngInput.value = cachedData.coordinates.longitude;
+          setCoordsChip(cachedData.coordinates.latitude, cachedData.coordinates.longitude);
+        }
+        if (cachedData.qiblaDegreesFromNorth != null) {
+          setQiblaInfo(cachedData.qiblaDegreesFromNorth);
+        }
+        applyFromJson();
+      } catch (err) {
+        console.error(err);
+        setStatus('Could not load prayerTimes.json. Use custom calculation.');
+      }
+    }
+
+    function exportShown() {
+      if (!lastRendered.days.length) {
+        setStatus('Nothing to export. Render something first.');
+        return;
+      }
+      const payload = {
+        meta: lastRendered.meta,
+        count: lastRendered.days.length,
+        data: lastRendered.days,
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      const label = lastRendered.meta?.view?.replace(/\s+/g, '-').toLowerCase() || 'export';
+      a.download = `prayer-times-${label}.json`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+      setStatus('Exported shown data.');
+    }
+
+    useLocationBtn.addEventListener('click', tryGeo);
+    applyBtn.addEventListener('click', applyCustom);
+    exportBtn.addEventListener('click', exportShown);
+    yearSelect.addEventListener('change', applyFromJson);
+    monthSelect.addEventListener('change', applyFromJson);
+    tzSelect.addEventListener('change', applyFromJson);
+    viewModeSelect.addEventListener('change', applyFromJson);
+    dayInput.addEventListener('change', applyFromJson);
+
+    init();
+  </script>
+</body>
+</html>
+
