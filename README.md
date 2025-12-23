@@ -2,6 +2,9 @@
 
 Simple static app that generates yearly prayer times JSON and displays it in a browser with filtering (full year, month, today, single day), timezone/method/coords controls, geolocation, qibla direction, and JSON export of the visible data.
 
+### Repo
+- git clone https://github.com/code-abdulrehman/adhan-api-app/
+
 ### Prerequisites
 - Node.js 18+
 
