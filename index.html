@@ -11,9 +11,9 @@
     body { font-family: 'Inter', system-ui, -apple-system, sans-serif; margin: 0; padding: 16px; background: #f6f7fb; color: #111; }
     h1 { margin: 0 0 12px; }
     .panel { background: #fff; border-radius: 12px; padding: 16px; box-shadow: 0 8px 30px rgba(0,0,0,0.06); margin-bottom: 16px; }
-    .controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; }
+    .controls { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); align-items: end; margin-bottom: 16px;}
     label { font-size: 13px; font-weight: 600; color: #333; display: block; margin-bottom: 4px; }
-    input, select, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #d1d5db; font-size: 14px; box-sizing: border-box; }
+    input, select, button { width: 100%; padding: 10px 12px; border-radius: 8px; border: 1px solid #d1d5db; font-size: 14px; box-sizing: border-box; text-wrap: nowrap; }
     button { cursor: pointer; background: #2563eb; color: #fff; border: none; font-weight: 600; }
     button.secondary { background: #111827; }
     button:disabled { opacity: 0.6; cursor: not-allowed; }
@@ -29,7 +29,15 @@
   </style>
 </head>
 <body>
-  <h1>Prayer Times & Qibla</h1>
+  <div style="display:flex; align-items:center; justify-content: space-between; gap:10px; flex-wrap:wrap; width: 100%;">
+    <h1 style="margin:0;">Prayer Times & Qibla</h1>
+    <a href="https://github.com/code-abdulrehman/adhan-api-app" target="_blank" rel="noopener noreferrer" aria-label="GitHub repository" style="display:inline-flex; align-items:center; gap:8px; text-decoration:none; color:#111;">
+      <svg height="28" width="28" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"></path>
+      </svg>
+      <span style="font-weight:600; font-size:14px;"></span>
+    </a>
+  </div>
   <div class="panel">
     <div class="controls">
       <div>
@@ -135,6 +143,8 @@
     const selectionEl = document.getElementById('current-selection');
 
     const DEFAULT_METHOD = 'MoonsightingCommittee';
+    const LS_DATA_KEY = 'adhan-prayer-data';
+    const LS_LAST_VIEW_KEY = 'adhan-last-view';
     let cachedData = null;
     let lastRendered = { days: [], meta: null };
 
@@ -220,6 +230,18 @@
         `Method: ${meta.method}`,
       ];
       selectionEl.textContent = parts.join(' | ');
+    }
+
+    function persistCachedData() {
+      try {
+        if (cachedData) localStorage.setItem(LS_DATA_KEY, JSON.stringify(cachedData));
+      } catch (_) { /* ignore */ }
+    }
+
+    function persistLastRendered() {
+      try {
+        if (lastRendered.meta) localStorage.setItem(LS_LAST_VIEW_KEY, JSON.stringify(lastRendered));
+      } catch (_) { /* ignore */ }
     }
 
     function getMonthDataFromJson(year, monthIndex) {
@@ -308,6 +330,7 @@
       }
       lastRendered = { days, meta };
       setSelection(meta);
+      persistLastRendered();
     }
 
     function computeSchedule(year, monthIndex, coords, methodKey) {
@@ -333,6 +356,27 @@
       }
       const qibla = new adhan.Qibla(coords);
       return { days, qibla: qibla.direction };
+    }
+
+    function computeYearData(year, coords, methodKey, tz) {
+      const months = [];
+      for (let m = 0; m < 12; m += 1) {
+        const { days, qibla } = computeSchedule(year, m, coords, methodKey);
+        months.push({
+          month: `${year}-${String(m + 1).padStart(2, '0')}`,
+          days,
+          qibla,
+        });
+      }
+      const qiblaDir = new adhan.Qibla(coords).direction;
+      return {
+        year,
+        coordinates: { latitude: coords.latitude, longitude: coords.longitude },
+        calculationMethod: methodKey,
+        timezone: tz,
+        qiblaDegreesFromNorth: qiblaDir,
+        months,
+      };
     }
 
     function applyCustom() {
@@ -362,6 +406,7 @@
       setCoordsChip(lat, lng);
       lastRendered = { days, meta };
       setSelection(meta);
+      persistLastRendered();
     }
 
     function tryGeo() {
@@ -390,24 +435,58 @@
       populateTimezones();
       populateYearsAndMonths(new Date().getFullYear());
       methodSelect.value = DEFAULT_METHOD;
+      const tz = tzSelect.value;
+      let loadedFrom = 'remote';
       try {
         const res = await fetch('prayerTimes.json');
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         cachedData = await res.json();
+        loadedFrom = 'remote json';
+        persistCachedData();
         setStatus('Loaded prayerTimes.json');
-        if (cachedData.coordinates) {
-          latInput.value = cachedData.coordinates.latitude;
-          lngInput.value = cachedData.coordinates.longitude;
-          setCoordsChip(cachedData.coordinates.latitude, cachedData.coordinates.longitude);
-        }
-        if (cachedData.qiblaDegreesFromNorth != null) {
-          setQiblaInfo(cachedData.qiblaDegreesFromNorth);
-        }
-        applyFromJson();
       } catch (err) {
-        console.error(err);
-        setStatus('Could not load prayerTimes.json. Use custom calculation.');
+        console.warn('Failed to fetch prayerTimes.json; falling back to cache or client generation.', err);
+        try {
+          const saved = localStorage.getItem(LS_DATA_KEY);
+          if (saved) {
+            cachedData = JSON.parse(saved);
+            loadedFrom = 'localStorage';
+            setStatus('Loaded cached data from localStorage.');
+          }
+        } catch (_) { /* ignore */ }
+        if (!cachedData) {
+          const now = new Date();
+          const coords = new adhan.Coordinates(
+            Number(latInput.value) || 35.7897507,
+            Number(lngInput.value) || -78.6912485,
+          );
+          cachedData = computeYearData(now.getFullYear(), coords, DEFAULT_METHOD, tz);
+          loadedFrom = 'client-generated';
+          persistCachedData();
+          setStatus('Generated data in-browser (serverless fallback).');
+        }
       }
+
+      if (cachedData.coordinates) {
+        latInput.value = cachedData.coordinates.latitude;
+        lngInput.value = cachedData.coordinates.longitude;
+        setCoordsChip(cachedData.coordinates.latitude, cachedData.coordinates.longitude);
+      }
+      if (cachedData.qiblaDegreesFromNorth != null) {
+        setQiblaInfo(cachedData.qiblaDegreesFromNorth);
+      }
+
+      applyFromJson();
+
+      try {
+        const savedView = localStorage.getItem(LS_LAST_VIEW_KEY);
+        if (savedView) {
+          lastRendered = JSON.parse(savedView);
+          setSelection(lastRendered.meta);
+        }
+      } catch (_) { /* ignore */ }
+
+      console.info('Data source:', loadedFrom);
     }
 
     function exportShown() {

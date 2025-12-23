@@ -1,0 +1,14 @@
+{
+  "version": 2,
+  "public": true,
+  "builds": [
+    { "src": "index.html", "use": "@vercel/static" },
+    { "src": "prayerTimes.json", "use": "@vercel/static" },
+    { "src": "index.js", "use": "@vercel/static" },
+    { "src": "README.md", "use": "@vercel/static" }
+  ],
+  "routes": [
+    { "handle": "filesystem" }
+  ]
+}
+
